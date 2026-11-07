@@ -63,14 +63,15 @@ document, which is the honest grain size for a plan. See [docs/rfc-map.md](docs/
 ## What it does not do
 
 - repository access or validation, which is rpkit
-- BGP itself, which is asnkit
+- BGP itself, which is pathattr
 - MRT files
 
 
 ## Install
 
 ```bash
-git clone https://github.com/b1tninja/rtrkit.cd rtrkit
+git clone https://github.com/b1tninja/rtrkit.git
+cd rtrkit
 python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\\Scripts\\Activate.ps1
 pip install -e ".[dev]"

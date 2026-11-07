@@ -11,20 +11,24 @@ behaviour regressed. Reading the code and agreeing with it is not enough. That i
 Legend: `[ok]` implemented and pinned by a named test -- `[part]` partial, with what is
 missing stated -- `[ ]` not implemented -- `[no]` deliberate non-goal.
 
+A Where cell marked `(to be written)` names the test that will pin the row once it exists; no
+such test has been written yet, and the row cannot leave `[ ]` until it has. The Milestone
+column places the row on the ladder in section 2, and `-` means it is not placed yet.
+
 Update the affected row in the same commit that changes the behaviour. A row and its test
 drift apart within one release, and the document becomes useless exactly when it is needed.
 
 ## 1. Obligations
 
-| Obligation | Spec | Status | Where |
-|---|---|---|---|
-| `serialize.decode_pdu()` | RFC 8210 | `[ ]` | `tests/test_obligations.py::decode_pdu` |
-| `serialize.encode_reset_query()` | RFC 8210 | `[ ]` | `tests/test_obligations.py::encode_reset_query` |
-| `serialize.encode_ipv4_prefix_record()` | RFC 8210 | `[ ]` | `tests/test_obligations.py::encode_ipv4_prefix_record` |
-| `serialize.encode_router_key_record()` | RFC 8210 | `[ ]` | `tests/test_obligations.py::encode_router_key_record` |
-| `session.serve()` | RFC 8210 | `[ ]` | `tests/test_obligations.py::serve` |
-| `session.connect()` | RFC 8210 | `[ ]` | `tests/test_obligations.py::connect` |
-| `inject.truncated_record()` | design | `[ ]` | `tests/test_obligations.py::truncated_record` |
+| Obligation | Spec | Status | Where | Milestone |
+|---|---|---|---|---|
+| `serialize.decode_pdu()` | RFC 8210 | `[ ]` | `tests/test_obligations.py::test_decode_pdu` (to be written) | M1 |
+| `serialize.encode_reset_query()` | RFC 8210 | `[ ]` | `tests/test_obligations.py::test_encode_reset_query` (to be written) | M1 |
+| `serialize.encode_ipv4_prefix_record()` | RFC 8210 | `[ ]` | `tests/test_obligations.py::test_encode_ipv4_prefix_record` (to be written) | M1 |
+| `serialize.encode_router_key_record()` | RFC 8210 | `[ ]` | `tests/test_obligations.py::test_encode_router_key_record` (to be written) | M1 |
+| `session.serve()` | RFC 8210 | `[ ]` | `tests/test_obligations.py::test_serve` (to be written) | M3 |
+| `session.connect()` | RFC 8210 | `[ ]` | `tests/test_obligations.py::test_connect` (to be written) | M2 |
+| `inject.truncated_record()` | design | `[ ]` | `tests/test_obligations.py::test_truncated_record` (to be written) | M4 |
 
 ## 2. Milestones
 
@@ -48,12 +52,13 @@ the code existing. Coverage in `pyproject.toml` ratchets in the same commit.
 | Non-goal | Status | Revisit when |
 |---|---|---|
 | repository access or validation, which is rpkit | `[no]` | a named document requires it |
-| BGP itself, which is asnkit | `[no]` | a named document requires it |
+| BGP itself, which is pathattr | `[no]` | a named document requires it |
 | MRT files | `[no]` | a named document requires it |
 
 ## 5. Open questions
 
 - does the server hold a full assertion set or stream from rpkit incrementally
+- M5 (drive it from an rpkit assertion stream) has no row: add one once the question above is settled, or drop the rung
 
 ## 6. Publication checklist
 
