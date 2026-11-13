@@ -30,6 +30,7 @@ from rtrkit import (
     encode_pdu,
     encode_reset_query,
     encode_serial_notify,
+    encode_serial_query,
 )
 from rtrkit.cache import NOTIFY_INTERVAL, CacheClosed, CacheSession, CacheStore, Served
 from rtrkit.pdu import ErrorCode
@@ -579,3 +580,57 @@ def test_a_cache_going_away_sends_restart_or_shutdown_only_in_version_2():
     pump(old, cache)
     assert not cache.going_away(restart=True) and cache.closed
     assert cache.data_to_send() == b""
+
+
+# ---- rows router.unexpected-pdu-code and the Cache Restart / Cache Shutdown timing ----------
+
+
+def test_router_unexpected_pdu_code():
+    # draft-ietf-sidrops-8210bis-29 section 8.5 names an Error Code for a PDU a router sends in
+    # place of a query (3), and section 8.6 for an unknown type (5); it names none for a known
+    # type that a router must not receive (a query, a payload PDU outside a Cache Response, an
+    # unsolicited or second Cache Response). The library answers Error Code 0, "not specified by
+    # another error code" (section 12), echoes the offending PDU and flushes.
+    payload = encode_pdu(Ipv4Prefix(2, True, 24, 24, ipaddress.IPv4Address("192.0.2.0"), 1))
+    cases = {
+        "serial query": (started(2), encode_serial_query(2, 1, 1)),
+        "reset query": (started(2), encode_reset_query(2)),
+        "payload outside a response": (started(2), payload),
+        "end of data outside a response": (started(2), encode_end_of_data(2, 1, 1, 100, 50, 1000)),
+    }
+    second = started(2)
+    assert second.receive_data(encode_cache_response(2, 1), 0.0) == []
+    cases["second cache response"] = (second, encode_cache_response(2, 1))
+    for name, (router, data) in cases.items():
+        (closed,) = router.receive_data(data, 0.0)
+        assert (closed.error_code, closed.sent, closed.flushed) == (0, True, True), name
+        report, _ = decode_pdu(router.data_to_send())
+        assert isinstance(report, ErrorReport) and report.code == 0, name
+        assert report.erroneous_pdu == data, name
+        assert router.closed and router.receive_data(data, 1.0) == [], name
+
+
+def test_cache_restart_keeps_data_to_the_caches_expire_and_retries_on_its_retry():
+    # Draft sections 8.7: retry on the Retry Interval the cache provided, flush only when the
+    # session is not resumed within the Expire Interval the cache provided.
+    store = CacheStore(5, intervals=Intervals(100, 50, 1000))
+    store.update([A])
+    router, cache = connect(store)
+    pump(router, cache, now=0.0)
+    router.receive_data(encode_error_report(2, ErrorCode.CACHE_RESTART, b"", "restart"), 500.0)
+    assert router.poll(549.0) == [] and router.data_to_send() == b""
+    assert router.poll(550.0) == []  # the cache's Retry Interval has run: a query goes out
+    assert router.data_to_send() != b"" and len(router.db) == 1
+    assert Expired() not in router.poll(999.0) and len(router.db) == 1
+    assert Expired() in router.poll(1000.0) and len(router.db) == 0  # the cache's Expire Interval
+
+
+def test_cache_shutdown_flushes_now_and_the_default_retry_applies():
+    # Draft section 8.8: flush now (error 13 is fatal, section 12) and retry on the default.
+    store = CacheStore(5, intervals=Intervals(100, 50, 1000))
+    store.update([A])
+    router, cache = connect(store)
+    pump(router, cache, now=0.0)
+    (closed,) = router.receive_data(encode_error_report(2, 13, b"", "bye"), 10.0)
+    assert (closed.error_code, closed.flushed, closed.sent) == (13, True, False)
+    assert len(router.db) == 0 and router.timers.next_query_at() == 10.0 + 600
