@@ -46,6 +46,7 @@ __all__ = [
     "RtrError",
     "SerialNotify",
     "SerialQuery",
+    "pdu_type",
 ]
 
 #: The draft revision version 2 and the ASPA PDU are implemented from (read raw from
@@ -252,3 +253,22 @@ Pdu = (
     | ErrorReport
     | Aspa
 )
+
+_PDU_TYPES: dict[type, PduType] = {
+    SerialNotify: PduType.SERIAL_NOTIFY,
+    SerialQuery: PduType.SERIAL_QUERY,
+    ResetQuery: PduType.RESET_QUERY,
+    CacheResponse: PduType.CACHE_RESPONSE,
+    Ipv4Prefix: PduType.IPV4_PREFIX,
+    Ipv6Prefix: PduType.IPV6_PREFIX,
+    EndOfData: PduType.END_OF_DATA,
+    CacheReset: PduType.CACHE_RESET,
+    RouterKey: PduType.ROUTER_KEY,
+    ErrorReport: PduType.ERROR_REPORT,
+    Aspa: PduType.ASPA,
+}
+
+
+def pdu_type(pdu: Pdu) -> PduType:
+    """The PDU Type octet of a decoded PDU record (RFC 8210 section 5)."""
+    return _PDU_TYPES[type(pdu)]

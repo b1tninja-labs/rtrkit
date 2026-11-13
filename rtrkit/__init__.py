@@ -5,7 +5,7 @@ RTR is the only protocol between an RPKI cache and a router, and Python cannot s
 
 from __future__ import annotations
 
-from . import apps, cli, inject, payload, pdu, serialize, session, timers
+from . import apps, cache, cli, inject, payload, pdu, router, serialize, session, timers
 from .inject import truncated_record
 from .pdu import (
     Aspa,
@@ -57,6 +57,7 @@ __all__ = [
     "SerialQuery",
     "__version__",
     "apps",
+    "cache",
     "cli",
     "connect",
     "decode_pdu",
@@ -75,6 +76,7 @@ __all__ = [
     "inject",
     "payload",
     "pdu",
+    "router",
     "serialize",
     "serve",
     "session",

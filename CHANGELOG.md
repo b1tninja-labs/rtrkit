@@ -13,6 +13,11 @@ The format follows Keep a Changelog, and this project adheres to Semantic Versio
   (`ordering_key`, `check_order`).
 - `rtrkit.timers`: `Intervals` and `PollTimer`, router refresh, retry and expire as functions of a
   clock.
+- `rtrkit.router.RouterSession` and `rtrkit.cache.CacheStore` with `CacheSession`: the two ends of an RTR
+  connection as sans-IO state machines (queries and responses, minimum-change Serial Query answers,
+  Cache Reset, Serial Notify with its rate limit, error handling and flushing by section 12, timers,
+  Cache Restart and Shutdown), tested by running them against each other in versions 0, 1 and 2.
+  `pdu.pdu_type` names the type of a decoded PDU. `connect()` and `serve()` (the socket loops) still raise.
 
 ### Changed
 
