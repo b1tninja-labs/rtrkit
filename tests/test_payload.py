@@ -144,3 +144,22 @@ def test_ordering_router_keys_and_aspa():
     check_order([Aspa(2, True, 1, (2,)), Aspa(2, True, 2, (3,)), Aspa(2, False, 1, ())])
     with pytest.raises(RtrError):
         check_order([Aspa(2, False, 1, ()), Aspa(2, True, 2, (3,))])
+
+
+def test_lenient_mode_skips_duplicates_and_unknown_withdrawals_and_reports_them():
+    # Strict is the default (the two tests above); lenient is the named opt-in.
+    db = PayloadDb()
+    apply_payload(db, [v4("192.0.2.0", 24, 24, 64496)])
+    ignored = apply_payload(
+        db,
+        [
+            v4("198.51.100.0", 24, 24, 1),
+            v4("192.0.2.0", 24, 24, 64496),  # duplicate
+            v4("203.0.113.0", 24, 24, 9, announce=False),  # unknown
+            Aspa(2, False, 64500, ()),  # unknown ASPA
+        ],
+        lenient=True,
+    )
+    assert len(db) == 2  # the good PDU applied; nothing rolled back
+    assert [error.code for error in ignored] == [7, 6, 6]
+    assert apply_payload(db, [v4("198.51.100.0", 24, 24, 1, announce=False)]) == ()

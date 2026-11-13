@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import struct
+
 import pytest
 
 from rtrkit import EndOfData
@@ -81,3 +83,29 @@ def test_cache_restart_keeps_intervals_and_shutdown_uses_the_default_retry():
     assert t.next_query_at() == 60
     t.on_cache_shutdown(20)
     assert t.next_query_at() == 20 + DEFAULT_RETRY
+
+
+def test_end_of_data_timers_out_of_range_are_kept_flagged_then_clamped_by_the_session():
+    from rtrkit.serialize import decode_pdu
+
+    # version 1, type 7, session 0, length 24, serial 7, then refresh 0, retry 9000, expire 100
+    wire = struct.pack(">BBHIIIII", 1, 7, 0, 24, 7, 0, 9000, 100)
+    pdu, used = decode_pdu(wire)
+    assert used == 24
+    # the decoder keeps them as sent and flags them
+    assert (pdu.refresh, pdu.retry, pdu.expire) == (0, 9000, 100)
+    assert pdu.timer_defects == ("refresh", "retry", "expire", "expire-order")
+    with pytest.raises(ValueError, match="interval"):
+        Intervals.from_end_of_data(pdu)
+    # the session clamps them and records that it did
+    timer = PollTimer(started_at=0.0)
+    timer.on_end_of_data_pdu(10.0, pdu)
+    assert timer.clamped == ("refresh", "retry", "expire", "expire-order")
+    assert timer.intervals == Intervals(1, 7200, 7201)
+    assert timer.next_query_at() == 11.0
+    # a conforming one is used as sent and records nothing
+    good = EndOfData(2, 1, 1, 100, 200, 900)
+    assert good.timer_defects == ()
+    timer.on_end_of_data_pdu(20.0, good)
+    assert timer.intervals == Intervals(100, 200, 900)
+    assert timer.clamped == ()

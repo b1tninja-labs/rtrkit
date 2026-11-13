@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
-from .pdu import EndOfData
+from .pdu import EXPIRE_RANGE, REFRESH_RANGE, RETRY_RANGE, EndOfData
 from .serialize import _check_timers
 
 __all__ = [
@@ -53,12 +53,31 @@ class Intervals:
     def from_end_of_data(cls, pdu: EndOfData) -> Intervals:
         """The intervals an End of Data carries; a version 0 one carries none, so defaults.
 
-        ``ValueError`` if the cache sent values outside the section 6 ranges: what a router
-        does with them is not specified (see ROADMAP open questions), so it is not guessed.
+        ``ValueError`` if the cache sent values outside the section 6 ranges: this method never
+        guesses. A session that wants to carry on uses :meth:`clamp_end_of_data`.
         """
         if pdu.refresh is None or pdu.retry is None or pdu.expire is None:
             return cls()
         return cls(pdu.refresh, pdu.retry, pdu.expire)
+
+    @classmethod
+    def clamp_end_of_data(cls, pdu: EndOfData) -> tuple[Intervals, tuple[str, ...]]:
+        """The intervals a session uses for an End of Data, and what it had to change.
+
+        Timers inside the section 6 ranges are used as sent. One outside its range is clamped to
+        the nearest end of it, and an Expire not larger than Refresh and Retry is raised to one
+        more than the larger of them. The second item is ``pdu.timer_defects``: the names of
+        what was clamped, empty when nothing was. The PDU itself is never altered.
+        """
+        defects = pdu.timer_defects
+        if not defects or pdu.refresh is None or pdu.retry is None or pdu.expire is None:
+            return cls.from_end_of_data(pdu), ()
+        refresh = min(max(pdu.refresh, REFRESH_RANGE[0]), REFRESH_RANGE[1])
+        retry = min(max(pdu.retry, RETRY_RANGE[0]), RETRY_RANGE[1])
+        expire = min(max(pdu.expire, EXPIRE_RANGE[0]), EXPIRE_RANGE[1])
+        if expire <= max(refresh, retry):
+            expire = max(refresh, retry) + 1  # at most 86401, inside the Expire range
+        return cls(refresh, retry, expire), defects
 
 
 @dataclass(slots=True)
@@ -69,10 +88,17 @@ class PollTimer:
     intervals: Intervals = Intervals()
     data_at: float | None = None  # when the last End of Data arrived
     failed_at: float | None = None  # when the most recent failed query failed
+    clamped: tuple[str, ...] = ()  # which timers of the last End of Data were clamped
 
     def on_end_of_data(self, now: float, intervals: Intervals) -> None:
         """A query succeeded: refresh and expire count from ``now``; the retry count stops."""
         self.intervals, self.data_at, self.failed_at = intervals, now, None
+
+    def on_end_of_data_pdu(self, now: float, pdu: EndOfData) -> None:
+        """As :meth:`on_end_of_data` for a decoded End of Data: out-of-range timers are clamped
+        (:meth:`Intervals.clamp_end_of_data`) and ``clamped`` records which ones."""
+        intervals, self.clamped = Intervals.clamp_end_of_data(pdu)
+        self.on_end_of_data(now, intervals)
 
     def on_query_failed(self, now: float) -> None:
         """A query failed: the retry countdown (re)starts at ``now``."""

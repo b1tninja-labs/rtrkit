@@ -22,6 +22,9 @@ import struct
 from itertools import pairwise
 
 from .pdu import (
+    EXPIRE_RANGE,
+    REFRESH_RANGE,
+    RETRY_RANGE,
     VERSIONS,
     Aspa,
     CacheReset,
@@ -73,11 +76,6 @@ _FIXED_LENGTH = {
 }
 _SKI_LENGTH = 20
 _KNOWN_TYPES = {int(t) for t in PduType}
-
-# RFC 8210 section 6: allowed timer ranges, in seconds.
-REFRESH_RANGE = (1, 86400)
-RETRY_RANGE = (1, 7200)
-EXPIRE_RANGE = (600, 172800)
 
 
 def _unsigned(value: int, bits: int, name: str) -> int:

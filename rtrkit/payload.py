@@ -9,8 +9,8 @@ Application rules, each from the section named:
 * an announcement of a prefix or router key already active is Duplicate Announcement
   Received (code 7); a withdrawal of one that is not held is Withdrawal of Unknown Record
   (code 6). The draft's section 12 says a party SHOULD send these and may "opt simply to
-  ignore the relevant PDU"; this database refuses, because a caller can always catch the
-  error and ignore it, and cannot recover a duplicate that was silently absorbed.
+  ignore the relevant PDU"; this database refuses by default, and ``lenient=True`` is the named
+  opt-in that keeps going and reports what it skipped.
 * a prefix record is identified by {Prefix, Prefix Length, Max Length, ASN}, a router key by
   {SKI, ASN, Subject Public Key}: the SKI alone is not enough (section 5.11 of the draft).
 * an ASPA announcement for a customer already held *replaces* the provider set; it is never a
@@ -72,48 +72,70 @@ def _prefix_key(pdu: Ipv4Prefix | Ipv6Prefix) -> PrefixKey:
     return (family, int(pdu.prefix), pdu.prefix_len, pdu.max_len, pdu.asn)
 
 
-def _apply_one(db: PayloadDb, pdu: Pdu) -> None:
+def _apply_one(db: PayloadDb, pdu: Pdu, ignored: list[RtrError] | None) -> None:
     if isinstance(pdu, Ipv4Prefix | Ipv6Prefix):
-        _apply_set(db.prefixes, _prefix_key(pdu), pdu.announce, "prefix")
+        _apply_set(db.prefixes, _prefix_key(pdu), pdu.announce, "prefix", ignored)
     elif isinstance(pdu, RouterKey):
-        _apply_set(db.router_keys, (pdu.ski, pdu.asn, pdu.spki), pdu.announce, "router key")
+        key = (pdu.ski, pdu.asn, pdu.spki)
+        _apply_set(db.router_keys, key, pdu.announce, "router key", ignored)
     elif isinstance(pdu, Aspa):
         if pdu.announce:
             db.aspas[pdu.customer_asn] = pdu.providers
         elif db.aspas.pop(pdu.customer_asn, None) is None:
-            raise RtrError(
+            _refuse(
                 f"ASPA withdrawal for customer AS{pdu.customer_asn} that is not held",
                 ErrorCode.WITHDRAWAL_OF_UNKNOWN_RECORD,
+                ignored,
             )
     else:
         raise TypeError(f"not a payload PDU: {pdu!r}")
 
 
-def _apply_set(held: set[Any], key: object, announce: bool, what: str) -> None:
+def _refuse(message: str, code: ErrorCode, ignored: list[RtrError] | None) -> None:
+    """Strict (``ignored`` is ``None``): raise. Lenient: record the refusal and carry on."""
+    error = RtrError(message, code)
+    if ignored is None:
+        raise error
+    ignored.append(error)
+
+
+def _apply_set(
+    held: set[Any], key: object, announce: bool, what: str, ignored: list[RtrError] | None
+) -> None:
     if announce:
         if key in held:
-            raise RtrError(f"duplicate {what} announcement", ErrorCode.DUPLICATE_ANNOUNCEMENT)
-        held.add(key)
+            _refuse(f"duplicate {what} announcement", ErrorCode.DUPLICATE_ANNOUNCEMENT, ignored)
+        else:
+            held.add(key)
     elif key in held:
         held.remove(key)
     else:
-        raise RtrError(f"withdrawal of an unknown {what}", ErrorCode.WITHDRAWAL_OF_UNKNOWN_RECORD)
+        _refuse(f"withdrawal of an unknown {what}", ErrorCode.WITHDRAWAL_OF_UNKNOWN_RECORD, ignored)
 
 
-def apply_payload(db: PayloadDb, pdus: Iterable[Pdu]) -> None:
+def apply_payload(
+    db: PayloadDb, pdus: Iterable[Pdu], *, lenient: bool = False
+) -> tuple[RtrError, ...]:
     """Apply payload PDUs to ``db`` all or nothing (RFC 8210 sections 5.6, 5.7 and 5.10;
     draft-ietf-sidrops-8210bis sections 5.12, 11.3 and 12).
 
-    Raises :class:`~rtrkit.pdu.RtrError` with code 7 (duplicate announcement) or 6 (withdrawal
-    of an unknown record) on the first offending PDU, leaving ``db`` exactly as it was. Anything
-    that is not an IPv4 Prefix, IPv6 Prefix, Router Key or ASPA PDU is a ``TypeError``: the
-    caller handles Cache Response, End of Data and the rest. The PDUs of one batch see one
-    another, so an announcement followed by its withdrawal in one batch is legal.
+    By default a duplicate announcement or a withdrawal of an unknown record is refused:
+    :class:`~rtrkit.pdu.RtrError` with code 7 or 6 on the first offending PDU, leaving ``db``
+    exactly as it was. That is the decision of PORTFOLIO.md sec. 9 item 15. With
+    ``lenient=True`` (the draft's section 12 lets a party "opt simply to ignore the relevant
+    PDU") the offending PDU is skipped, the rest of the batch applies, and the skipped ones come
+    back as a tuple of the errors that strict mode would have raised, so nothing is absorbed
+    unseen. The result is empty in strict mode. Anything that is not an IPv4 Prefix, IPv6 Prefix,
+    Router Key or ASPA PDU is a ``TypeError``: the caller handles Cache Response, End of Data and
+    the rest. The PDUs of one batch see one another, so an announcement followed by its
+    withdrawal in one batch is legal.
     """
     work = db.copy()
+    ignored: list[RtrError] | None = [] if lenient else None
     for pdu in pdus:
-        _apply_one(work, pdu)
+        _apply_one(work, pdu, ignored)
     db.prefixes, db.router_keys, db.aspas = work.prefixes, work.router_keys, work.aspas
+    return tuple(ignored or ())
 
 
 def ordering_key(pdu: Pdu) -> tuple[object, ...]:

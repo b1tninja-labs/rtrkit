@@ -25,7 +25,10 @@ if TYPE_CHECKING:
 __all__ = [
     "DRAFT_8210BIS",
     "DRAFT_ASPA_PROFILE",
+    "EXPIRE_RANGE",
     "FATAL_ERRORS",
+    "REFRESH_RANGE",
+    "RETRY_RANGE",
     "VERSIONS",
     "Aspa",
     "CacheReset",
@@ -162,9 +165,19 @@ class Ipv6Prefix:
     asn: int
 
 
+# RFC 8210 section 6: allowed timer ranges, in seconds.
+REFRESH_RANGE = (1, 86400)
+RETRY_RANGE = (1, 7200)
+EXPIRE_RANGE = (600, 172800)
+
+
 @dataclass(frozen=True, slots=True)
 class EndOfData:
-    """End of Data. The three timers exist only in version 1; they are ``None`` in version 0."""
+    """End of Data. The three timers exist only in version 1; they are ``None`` in version 0.
+
+    The decoder keeps timers exactly as sent, even outside the section 6 ranges (what a router
+    does with them is not specified), and :attr:`timer_defects` is where it flags them.
+    """
 
     version: int
     session_id: int
@@ -172,6 +185,26 @@ class EndOfData:
     refresh: int | None = None
     retry: int | None = None
     expire: int | None = None
+
+    @property
+    def timer_defects(self) -> tuple[str, ...]:
+        """Which timers break section 6, by name: ``refresh``, ``retry``, ``expire`` for a value
+        outside its range, ``expire-order`` when Expire is not larger than Refresh and Retry.
+        Empty for a version 0 PDU (no timers) and for a conforming one."""
+        if self.refresh is None or self.retry is None or self.expire is None:
+            return ()
+        found = [
+            name
+            for name, value, (low, high) in (
+                ("refresh", self.refresh, REFRESH_RANGE),
+                ("retry", self.retry, RETRY_RANGE),
+                ("expire", self.expire, EXPIRE_RANGE),
+            )
+            if not low <= value <= high
+        ]
+        if self.expire <= self.refresh or self.expire <= self.retry:
+            found.append("expire-order")
+        return tuple(found)
 
 
 @dataclass(frozen=True, slots=True)
