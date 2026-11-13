@@ -35,7 +35,7 @@ def test_cache_v0only_receives_v1_sends_error_4_v0_formatted():
 
 
 def test_unknown_version_2_terminates_with_error_4():
-    # section 7 para 7
+    # section 7 para 7: a cache that supports only 0 and 1 meets a version 2 query
     decision = negotiate(Role.CACHE, BOTH, 2, RESET_QUERY)
     assert (decision.action, decision.error_code, decision.send_error_report) == (
         "terminate",
@@ -86,6 +86,28 @@ def test_cache_first_pdu_that_is_not_a_query_is_invalid_request():
     assert (decision.action, decision.error_code) == ("terminate", 3)
 
 
+ALL = frozenset({0, 1, 2})
+
+
+def test_version_2_cache_negotiates_all_three_versions():
+    # draft-ietf-sidrops-8210bis section 7: a cache of version C answers Q < C at Q
+    assert negotiate(Role.CACHE, ALL, 2, RESET_QUERY).action == "use"
+    for version in (0, 1):
+        decision = negotiate(Role.CACHE, ALL, version, SERIAL_QUERY)
+        assert (decision.action, decision.version) == ("downgrade", version)
+    unknown = negotiate(Role.CACHE, ALL, 3, RESET_QUERY)
+    assert (unknown.error_code, unknown.report_version) == (4, 2)
+
+
+def test_version_2_router_downgrade_and_retry_at_the_cache_version():
+    # section 7: Error Code 4 carries the cache's version C; the router retries at C
+    decision = negotiate(Role.ROUTER, ALL, 1, ERROR_REPORT, proposed=2)
+    assert (decision.action, decision.retry_version) == ("terminate", 1)
+    assert negotiate(Role.ROUTER, ALL, 1, CACHE_RESPONSE, proposed=2).action == "downgrade"
+    assert negotiate(Role.ROUTER, ALL, 2, CACHE_RESPONSE, proposed=2).action == "use"
+    assert check_established(2, 1, SERIAL_QUERY).error_code == 8
+
+
 def test_established_version_mismatch_drops_with_error_8():
     # section 7 para 11
     decision = check_established(1, 0, SERIAL_QUERY)
@@ -109,7 +131,7 @@ def test_version_255_and_friends_are_unknown(version):
 
 def test_unsupported_sets_and_missing_proposal_are_programming_errors():
     with pytest.raises(ValueError, match="supported"):
-        negotiate(Role.CACHE, frozenset({2}), 1, RESET_QUERY)
+        negotiate(Role.CACHE, frozenset({3}), 1, RESET_QUERY)
     with pytest.raises(ValueError, match="supported"):
         negotiate(Role.CACHE, frozenset(), 1, RESET_QUERY)
     with pytest.raises(ValueError, match="propose"):

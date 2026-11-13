@@ -1,4 +1,5 @@
-"""client and server state machine: version negotiation, serials, timers (RFC 8210).
+"""client and server state machine: version negotiation, serials, timers (RFC 8210; version 2
+per draft-ietf-sidrops-8210bis, section 7 unchanged in substance).
 
 Every object in this module is a placeholder until the milestone named in ROADMAP.md lands. A
 stub raises instead of returning a plausible empty value: a protocol library that silently
@@ -11,7 +12,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Literal
 
-from .pdu import ErrorCode, PduType
+from .pdu import VERSIONS, ErrorCode, PduType
 
 if TYPE_CHECKING:
     from typing import Any
@@ -93,14 +94,14 @@ def negotiate(
     retry at the Error Report's version when that is lower and supported. An unrecognized
     version terminates with Error Code 4 and an Error Report unless the PDU is one.
     """
-    if not supported or not supported <= {0, 1}:
-        raise ValueError("supported must be a non-empty subset of {0, 1}")
+    if not supported or not supported <= VERSIONS:
+        raise ValueError("supported must be a non-empty subset of {0, 1, 2}")
     if role is Role.ROUTER:
         if proposed not in supported:
             raise ValueError("a router must propose a version it supports")
         if pdu_type == int(PduType.SERIAL_NOTIFY):
             return Decision("ignore")
-        if pdu_version not in (0, 1) or pdu_version not in supported:
+        if pdu_version not in supported:
             return _terminate(ErrorCode.UNSUPPORTED_PROTOCOL_VERSION, pdu_type, supported)
         if pdu_type == _ERROR_REPORT:
             lower = pdu_version if pdu_version < proposed else None

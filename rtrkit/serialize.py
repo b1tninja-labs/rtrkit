@@ -1,4 +1,5 @@
-"""Byte-exact encode and decode of RTR PDUs, with hostile input refused (RFC 8210, RFC 6810).
+"""Byte-exact encode and decode of RTR PDUs, with hostile input refused (RFC 8210, RFC 6810,
+and version 2 per the draft pinned as ``rtrkit.pdu.DRAFT_8210BIS``).
 
 Every PDU starts with the 8-octet header of RFC 8210 section 5.1: Protocol Version, PDU Type,
 a 16-bit field (Session ID, Error Code, or zero), and a 32-bit Length that counts the whole
@@ -18,9 +19,11 @@ from __future__ import annotations
 
 import ipaddress
 import struct
+from itertools import pairwise
 
 from .pdu import (
     VERSIONS,
+    Aspa,
     CacheReset,
     CacheResponse,
     EndOfData,
@@ -41,6 +44,7 @@ from .pdu import (
 __all__ = [
     "MAX_PDU_LENGTH",
     "decode_pdu",
+    "encode_aspa",
     "encode_cache_reset",
     "encode_cache_response",
     "encode_end_of_data",
@@ -84,7 +88,7 @@ def _unsigned(value: int, bits: int, name: str) -> int:
 
 def _version(version: int) -> int:
     if version not in VERSIONS:
-        raise ValueError(f"protocol version must be 0 or 1, got {version!r}")
+        raise ValueError(f"protocol version must be 0, 1 or 2, got {version!r}")
     return version
 
 
@@ -139,7 +143,7 @@ def encode_reset_query(version: int) -> bytes:
     """Reset Query, RFC 8210 section 5.4: type 2, Length 8, and no session (the field is zero).
 
     The first PDU a router sends carries the protocol version it implements (section 7), so
-    the argument is that version, 0 or 1.
+    the argument is that version, 0, 1 or 2.
     """
     return HEADER.pack(_version(version), PduType.RESET_QUERY, 0, 8)
 
@@ -195,9 +199,10 @@ def encode_end_of_data(
     expire: int | None = None,
 ) -> bytes:
     """End of Data: RFC 8210 section 5.8 (version 1, Length 24, three timers) or RFC 6810
-    section 5.8 (version 0, Length 12, no timers).
+    section 5.8 (version 0, Length 12, no timers). Version 2 is the same as version 1
+    (draft-ietf-sidrops-8210bis section 5.7).
 
-    Version 1 requires all three timers and checks them against the ranges of RFC 8210
+    Versions 1 and 2 require all three timers and checks them against the ranges of RFC 8210
     section 6. Version 0 has nowhere to put them and refuses them.
     """
     _version(version)
@@ -207,9 +212,9 @@ def encode_end_of_data(
             raise ValueError("version 0 End of Data carries no timers (RFC 6810 section 5.8)")
         return HEADER.pack(0, PduType.END_OF_DATA, head[0], 12) + struct.pack(">I", head[1])
     if refresh is None or retry is None or expire is None:
-        raise ValueError("version 1 End of Data needs refresh, retry and expire")
+        raise ValueError("End of Data in version 1 or 2 needs refresh, retry and expire")
     _check_timers(refresh, retry, expire)
-    return HEADER.pack(1, PduType.END_OF_DATA, head[0], 24) + struct.pack(
+    return HEADER.pack(version, PduType.END_OF_DATA, head[0], 24) + struct.pack(
         ">IIII", head[1], refresh, retry, expire
     )
 
@@ -219,12 +224,12 @@ def encode_router_key_record(
 ) -> bytes:
     """Router Key, RFC 8210 section 5.10: type 9, variable Length.
 
-    Version 1 only: the PDU type was added by RFC 8210 (section 1.2). ``ski`` is exactly 20
+    Versions 1 and 2: the PDU type was added by RFC 8210 (section 1.2). ``ski`` is exactly 20
     octets; ``spki`` is the full DER SubjectPublicKeyInfo SEQUENCE (section 5.1), whose
     format RFC 8608 now defines (RFC 8210 cites RFC 8208, which RFC 8608 obsoletes).
     """
-    if version != 1:
-        raise ValueError("Router Key PDUs exist only in protocol version 1")
+    if version not in (1, 2):
+        raise ValueError("Router Key PDUs exist only in protocol version 1 or 2")
     if len(ski) != _SKI_LENGTH:
         raise ValueError("subject key identifier must be 20 octets")
     if not _der_sequence_is_complete(spki):
@@ -233,10 +238,55 @@ def encode_router_key_record(
     if length > MAX_PDU_LENGTH:
         raise ValueError("Router Key PDU exceeds MAX_PDU_LENGTH")
     return (
-        HEADER.pack(1, PduType.ROUTER_KEY, int(bool(announce)) << 8, length)
+        HEADER.pack(version, PduType.ROUTER_KEY, int(bool(announce)) << 8, length)
         + ski
         + struct.pack(">I", _unsigned(asn, 32, "asn"))
         + spki
+    )
+
+
+def check_aspa_providers(customer_asn: int, providers: tuple[int, ...], announce: bool) -> None:
+    """Refuse a provider list the draft forbids, as ``ValueError`` (the decoder maps it to code 9).
+
+    draft-ietf-sidrops-8210bis section 5.12: an announcement has at least one provider, in
+    increasing numeric order, with no duplicates and no AS0 beside other providers; a
+    withdrawal has none. (The customer ASN not appearing among its providers is a rule of
+    draft-ietf-sidrops-aspa-profile section 3.3 for the signed object, not of the PDU, so it
+    is not checked here.)
+    """
+    _unsigned(customer_asn, 32, "customer asn")
+    if not announce:
+        if providers:
+            raise ValueError("an ASPA withdrawal carries no provider list")
+        return
+    if not providers:
+        raise ValueError("an ASPA announcement needs at least one provider")
+    for asn in providers:
+        _unsigned(asn, 32, "provider asn")
+    if any(a >= b for a, b in pairwise(providers)):
+        raise ValueError("ASPA providers must be in increasing order without duplicates")
+    if 0 in providers and len(providers) > 1:
+        raise ValueError("AS0 must not appear alongside other ASPA providers")
+
+
+def encode_aspa(
+    version: int, customer_asn: int, providers: tuple[int, ...], announce: bool
+) -> bytes:
+    """ASPA, draft-ietf-sidrops-8210bis section 5.12: type 11, Length 12 + 4 per provider.
+
+    Version 2 only. Flags bit 0 is the announce flag; a withdrawal has Length 12.
+    """
+    if version != 2:
+        raise ValueError("ASPA PDUs exist only in protocol version 2")
+    providers = tuple(providers)
+    check_aspa_providers(customer_asn, providers, announce)
+    length = 12 + 4 * len(providers)
+    if length > MAX_PDU_LENGTH:
+        raise ValueError("ASPA PDU exceeds MAX_PDU_LENGTH")
+    return (
+        HEADER.pack(2, PduType.ASPA, int(bool(announce)) << 8, length)
+        + struct.pack(">I", customer_asn)
+        + b"".join(struct.pack(">I", p) for p in providers)
     )
 
 
@@ -247,7 +297,12 @@ def encode_error_report(
 
     Refuses to encapsulate an Error Report (an Error Report MUST NOT be sent for one,
     section 5.11). The text is UTF-8; empty text writes a zero Length of Error Text.
+
+    Section 12 of draft-ietf-sidrops-8210bis says errors are sent only with codes defined by the
+    specification of the session's version, so codes 9 to 13 are refused below version 2.
     """
+    if version < 2 and ErrorCode.ASPA_PROVIDER_LIST_ERROR <= code <= ErrorCode.CACHE_SHUTDOWN:
+        raise ValueError(f"error code {code} exists only in protocol version 2")
     if len(erroneous_pdu) >= 2 and erroneous_pdu[1] == PduType.ERROR_REPORT:
         raise ValueError("an Error Report must not be sent for an Error Report (RFC 8210 5.11)")
     body_text = text.encode("utf-8")
@@ -288,6 +343,8 @@ def encode_pdu(pdu: Pdu) -> bytes:
             return encode_cache_reset(pdu.version)
         case RouterKey():
             return encode_router_key_record(pdu.version, pdu.asn, pdu.ski, pdu.spki, pdu.announce)
+        case Aspa():
+            return encode_aspa(pdu.version, pdu.customer_asn, pdu.providers, pdu.announce)
         case ErrorReport():
             return encode_error_report(pdu.version, pdu.code, pdu.erroneous_pdu, pdu.text)
     raise TypeError(f"not a PDU: {pdu!r}")
@@ -299,8 +356,9 @@ def decode_pdu(raw: bytes) -> tuple[Pdu, int]:
 
     Raises :class:`~rtrkit.pdu.NeedMore` when ``raw`` is a valid beginning that ends early,
     and :class:`~rtrkit.pdu.RtrError` (with the section 12 code) for anything that can never
-    be a PDU: version other than 0 or 1 (code 4), unassigned type or Router Key in version 0
-    (code 5), and a length, prefix, timer-shape, SPKI or UTF-8 violation (code 0). Never
+    be a PDU: version other than 0, 1 or 2 (code 4), unassigned type, Router Key in version 0
+    or ASPA before version 2 (code 5), a bad ASPA provider list (code 9), and a length,
+    prefix, timer-shape, SPKI or UTF-8 violation (code 0). Never
     returns a partial record. Reserved flag bits and zero fields are ignored (section 5).
     """
     if len(raw) < 8:
@@ -310,7 +368,11 @@ def decode_pdu(raw: bytes) -> tuple[Pdu, int]:
         raise RtrError(
             f"unknown protocol version {version}", ErrorCode.UNSUPPORTED_PROTOCOL_VERSION
         )
-    if ptype not in _KNOWN_TYPES or (ptype == PduType.ROUTER_KEY and version == 0):
+    if (
+        ptype not in _KNOWN_TYPES
+        or (ptype == PduType.ROUTER_KEY and version == 0)
+        or (ptype == PduType.ASPA and version < 2)
+    ):
         raise RtrError(f"unsupported PDU type {ptype}", ErrorCode.UNSUPPORTED_PDU_TYPE)
     kind = PduType(ptype)
     want = _FIXED_LENGTH.get(kind)
@@ -320,6 +382,8 @@ def decode_pdu(raw: bytes) -> tuple[Pdu, int]:
         raise RtrError(f"PDU length {length} out of range")
     if want is not None and length != want:
         raise RtrError(f"{kind.name} has length {length}, expected {want}")
+    if kind is PduType.ASPA and (length < 12 or (length - 12) % 4):
+        raise RtrError(f"ASPA length {length} is not 12 plus a whole number of providers")
     if length < 8 + 4 + 4 and kind is PduType.ERROR_REPORT:
         raise RtrError("Error Report shorter than its fixed fields")
     if kind is PduType.ROUTER_KEY and length < 8 + _SKI_LENGTH + 4 + 2:
@@ -348,7 +412,7 @@ def _decode_body(kind: PduType, version: int, field: int, body: bytes) -> Pdu:
             if version == 0:
                 return EndOfData(0, field, struct.unpack(">I", body)[0])
             serial, refresh, retry, expire = struct.unpack(">IIII", body)
-            return EndOfData(1, field, serial, refresh, retry, expire)
+            return EndOfData(version, field, serial, refresh, retry, expire)
         case PduType.ROUTER_KEY:
             ski = body[:_SKI_LENGTH]
             (asn,) = struct.unpack(">I", body[_SKI_LENGTH : _SKI_LENGTH + 4])
@@ -358,7 +422,21 @@ def _decode_body(kind: PduType, version: int, field: int, body: bytes) -> Pdu:
             return RouterKey(version, bool(field >> 8 & 1), ski, asn, spki)
         case PduType.ERROR_REPORT:
             return _decode_error_report(version, field, body)
+        case PduType.ASPA:
+            return _decode_aspa(version, field, body)
     raise RtrError(f"unsupported PDU type {int(kind)}", ErrorCode.UNSUPPORTED_PDU_TYPE)
+
+
+def _decode_aspa(version: int, field: int, body: bytes) -> Aspa:
+    announce = bool(field >> 8 & 1)
+    (customer,) = struct.unpack_from(">I", body)
+    count = (len(body) - 4) // 4
+    providers = struct.unpack(f">{count}I", body[4:])
+    try:
+        check_aspa_providers(customer, providers, announce)
+    except ValueError as error:
+        raise RtrError(str(error), ErrorCode.ASPA_PROVIDER_LIST_ERROR) from error
+    return Aspa(version, announce, customer, providers)
 
 
 def _decode_prefix(kind: PduType, version: int, body: bytes) -> Pdu:

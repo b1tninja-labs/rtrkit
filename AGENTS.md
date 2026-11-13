@@ -1,6 +1,6 @@
 # Instructions for coding agents
 
-RPKI-to-Router (RTR) version 0 and 1: cache server and router client, IPv4 and IPv6 prefix and router-key records, serial notify and reset query.
+RPKI-to-Router (RTR) version 0, 1 and 2 (version 2 from an Internet-Draft): cache server and router client, IPv4 and IPv6 prefix and router-key records, serial notify and reset query.
 
 Primary documents are listed in `docs/rfc-map.md` with statuses and known errata.
 The obligation table in `ROADMAP.md` records what is owed, and `README.md` explains

@@ -5,8 +5,10 @@
      the badges stay commented out until the tag exists.
 -->
 
-**Pre-alpha.** The PDU codec (RFC 8210 versions 0 and 1, every PDU type) and the sans-IO
-version negotiation are implemented and tested. `session.serve()` and `session.connect()` still
+**Pre-alpha.** The PDU codec (RFC 8210 versions 0 and 1, every PDU type; version 2 and the ASPA
+PDU from `draft-ietf-sidrops-8210bis-29`, a draft and not an RFC), the sans-IO version negotiation,
+payload application with the version 2 ordering, and the router polling timers are implemented and
+tested. `session.serve()` and `session.connect()` still
 raise `NotImplementedError`; there are no sockets, no client or server state machine and no
 real-cache interop capture yet. Read [ROADMAP.md](ROADMAP.md) before depending on any of it.
 
@@ -46,6 +48,8 @@ document, which is the honest grain size for a plan. See [docs/rfc-map.md](docs/
 |---|---|---|---|
 | RFC 8210 | Proposed Standard | 2017-09 | RTR version 1: PDU set, record types, error handling |
 | RFC 6810 | Proposed Standard | 2013-01 | version 0, still what most routers speak |
+| draft-ietf-sidrops-8210bis-29 | Internet-Draft, 2026-11-12 | - | RTR version 2: the ASPA PDU (type 11), error codes 9 to 13, payload ordering; pinned in `rtrkit.pdu.DRAFT_8210BIS` |
+| draft-ietf-sidrops-aspa-profile-31 | Internet-Draft, 2026-11 | - | the ASPA provider-list rules (section 3.3) |
 | RFC 6480 | Informational | 2012-02 | where a cache server sits and what it must deliver |
 | RFC 9324 | Proposed Standard | 2022-12 | why fresh RPKI data must not trigger a BGP route refresh |
 
@@ -61,6 +65,8 @@ document, which is the honest grain size for a plan. See [docs/rfc-map.md](docs/
 | `pdu` | RTR PDU framing and every record type (RFC 8210) |
 | `serialize` | endian-exact encode and decode, hostile input refusal (RFC 8210, RFC 6810) |
 | `session` | client and server state machine: version negotiation, serials, timers (RFC 8210) |
+| `payload` | applying payload PDUs to a router database, and the version 2 cache ordering (RFC 8210, 8210bis draft) |
+| `timers` | router refresh, retry and expire as functions of a clock (RFC 8210 section 6) |
 | `inject` | fault injection helpers for conformance testing |
 
 ## What it does not do

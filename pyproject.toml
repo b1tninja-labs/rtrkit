@@ -10,7 +10,7 @@ name = "rtrkit"
 dynamic = ["version"]
 # The description names the protocol and the documents, because that is the only text
 # a person searching PyPI will read before deciding this is the library they need.
-description = "RPKI-to-Router (RTR) version 0 and 1: cache server and router client, IPv4 and IPv6 prefix and router-key records, serial notify and reset query"
+description = "RPKI-to-Router (RTR) versions 0, 1 and 2: cache server and router client, IPv4 and IPv6 prefix, router-key and ASPA records, serial notify and reset query"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.12"

@@ -310,14 +310,15 @@ def test_decode_unknown_type_5():
     assert other.value.code == 5
 
 
-def test_decode_unknown_version_2():
+def test_decode_unknown_version_3():
+    # version 2 is known since draft-ietf-sidrops-8210bis; 3 is not
     with pytest.raises(RtrError) as caught:
-        decode_pdu(h("02 02 0000 00000008"))
+        decode_pdu(h("03 02 0000 00000008"))
     assert caught.value.code == 4
     with pytest.raises(RtrError):
         decode_pdu(h("FF 02 0000 00000008"))
     with pytest.raises(ValueError, match="version"):
-        encode_reset_query(2)
+        encode_reset_query(3)
 
 
 def test_encode_rejects_out_of_range_integers():
