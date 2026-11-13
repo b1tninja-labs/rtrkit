@@ -5,10 +5,13 @@
      the badges stay commented out until the tag exists.
 -->
 
-**Pre-alpha shell.** The package surface, the obligation matrix and the CI gates exist.
-No protocol behaviour is implemented: every public function raises `NotImplementedError`,
-and the test suite records that rather than hiding it. Read
-[ROADMAP.md](ROADMAP.md) before depending on any of it.
+**Pre-alpha.** The PDU codec (RFC 8210 versions 0 and 1, every PDU type) and the sans-IO
+version negotiation are implemented and tested. `session.serve()` and `session.connect()` still
+raise `NotImplementedError`; there are no sockets, no client or server state machine and no
+real-cache interop capture yet. Read [ROADMAP.md](ROADMAP.md) before depending on any of it.
+
+Dependencies: Python standard library only. The `cryptography` package would be the only
+permitted exception, for cryptographic primitives; everything else is implemented here.
 
 rtrkit -- RPKI-to-Router protocol, both ends
 
